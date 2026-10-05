@@ -1,0 +1,89 @@
+import numpy as np
+from scipy.optimize import brentq
+
+# Inputs
+r_inlet  = 3.0    # in, converging inlet radius
+r_throat = 1.25   # in, throat radius
+r_exit   = 2.5    # in, exit radius
+n_conv   = 20     # points in converging section
+n_div    = 30     # points in diverging section
+gamma    = 1.2    # ratio of specific heats
+p0       = 300.0  # psi, chamber (stagnation) pressure
+
+A_star = np.pi * r_throat**2   # throat area (M = 1)
+
+# Area-Mach relation 
+def area_ratio(M, g=gamma):
+    return (1/M) * ((2/(g+1)) * (1 + (g-1)/2 * M**2))**((g+1)/(2*(g-1))) # gives us Area ratios relative to area at the throat
+
+ # Solve area_ratio(M) - ar = 0 for M, searching only on the subsonic branch (0 < M < 1)
+def mach_subsonic(ar):
+    if np.isclose(ar, 1.0):
+        return 1.0
+    return brentq(lambda M: area_ratio(M) - ar, 1e-6, 0.9999) # returns a mach value associates with the appropriate area ratio
+
+ # Solve area_ratio(M) - ar = 0 for M, searching only on the supersonic branch (1 < M)
+def mach_supersonic(ar):
+    if np.isclose(ar, 1.0):
+        return 1.0
+    return brentq(lambda M: area_ratio(M) - ar, 1.0001, 20) # returns a mach value associates with the appropriate area ratio
+
+# Isentropic pressure relation 
+def pressure_ratio(M, g=gamma):
+    """p/p0 = (1 + (g-1)/2 * M^2)^(-g/(g-1))""" 
+    return (1 + (g-1)/2 * M**2) ** (-g/(g-1))
+
+# ---- Thickness calculations ----
+
+# Carbon fiber inputs 
+sigma_ult = 60000.0   # psi, hoop tensile strength of wet-layup woven CF/epoxy (CHANGE to your coupon data)
+SF        = 3.0       # safety factor
+t_ply     = 0.010     # in, cured thickness per ply (CHANGE to your measured value)
+sigma_allow = sigma_ult / SF
+
+# Hoop stress (thin-wall cylinder) 
+def required_thickness(p, r):
+    # sigma = p*r/t  ->  t = p*r/sigma_allow
+    return p * r / sigma_allow
+# calculated hoop stress
+def hoop_stress(p, r, t):
+    return p * r / t
+
+
+t_conv   = required_thickness(p_conv, r_conv)
+ply_conv = np.ceil(t_conv / t_ply).astype(int)
+
+# ---- Table printer ----
+def print_table(title, r, A, AR, M, p, t_req, n_ply, sigma):
+    print(f"\n{title}")
+    print(f"{'i':>3} {'r [in]':>7} {'A [in^2]':>9} {'A/A*':>6} {'M':>6} "
+          f"{'p [psi]':>8} {'t_req [in]':>11} {'plies':>6} {'sigma [psi]':>12}")
+    for i in range(len(r)):
+        print(f"{i:>3} {r[i]:7.3f} {A[i]:9.3f} {AR[i]:6.3f} {M[i]:6.3f} "
+              f"{p[i]:8.2f} {t_req[i]:11.4f} {n_ply[i]:6d} {sigma[i]:12.0f}")
+
+# CONVERGING subsonic 
+r_conv     = np.linspace(r_inlet, r_throat, n_conv)
+A_conv     = np.pi * r_conv**2
+AR_conv    = A_conv / A_star
+M_conv     = np.array([mach_subsonic(ar) for ar in AR_conv])
+p_conv     = p0 * pressure_ratio(M_conv)
+t_conv     = required_thickness(p_conv, r_conv)
+ply_conv   = np.ceil(t_conv / t_ply).astype(int)
+sigma_conv = hoop_stress(p_conv, r_conv, ply_conv * t_ply)  
+
+print_table("CONVERGING SECTION (subsonic)",
+            r_conv, A_conv, AR_conv, M_conv, p_conv, t_conv, ply_conv, sigma_conv)
+
+# DIVERGING supersonic 
+r_div     = np.linspace(r_throat, r_exit, n_div)
+A_div     = np.pi * r_div**2
+AR_div    = A_div / A_star
+M_div     = np.array([mach_supersonic(ar) for ar in AR_div])
+p_div     = p0 * pressure_ratio(M_div)
+t_div     = required_thickness(p_div, r_div)
+ply_div   = np.ceil(t_div / t_ply).astype(int)
+sigma_div = hoop_stress(p_div, r_div, ply_div * t_ply)
+
+print_table("DIVERGING SECTION (supersonic)",
+            r_div, A_div, AR_div, M_div, p_div, t_div, ply_div, sigma_div)
